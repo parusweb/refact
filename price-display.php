@@ -2,7 +2,7 @@
 /**
  * Модуль: Отображение цен
  * Описание: Форматирование и отображение цен с учетом единиц измерения
- * Зависимости: product-calculations
+ * Зависимости: product-calculations, category-helpers
  */
 
 if (!defined('ABSPATH')) {
@@ -10,89 +10,49 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Определение типа продажи товара
- */
-function get_product_sale_type($product_id) {
-    // Проверяем категории для погонных метров
-    if (is_running_meter_category($product_id)) {
-        return 'running_meter';
-    }
-    
-    // Проверяем категории для квадратных метров
-    if (is_square_meter_category($product_id)) {
-        return 'square_meter';
-    }
-    
-    // Проверяем флаги товара
-    if (get_post_meta($product_id, '_sold_by_area', true) === 'yes') {
-        return 'square_meter';
-    }
-    
-    if (get_post_meta($product_id, '_sold_by_length', true) === 'yes') {
-        return 'running_meter';
-    }
-    
-    // Проверяем по единице измерения
-    $unit = get_post_meta($product_id, '_custom_unit', true);
-    if ($unit === 'м.п.') {
-        return 'running_meter';
-    }
-    if ($unit === 'м2') {
-        return 'square_meter';
-    }
-    
-    return 'standard';
-}
-
-/**
- * Проверка категории погонных метров
- */
-function is_running_meter_category($product_id) {
-    return has_term([266, 271], 'product_cat', $product_id);
-}
-
-/**
- * Проверка категории квадратных метров
- */
-function is_square_meter_category($product_id) {
-    return has_term([270, 267, 268], 'product_cat', $product_id);
-}
-
-/**
  * Форматирование цены с единицей измерения
  */
-add_filter('woocommerce_get_price_html', 'format_price_with_unit', 10, 2);
-function format_price_with_unit($price_html, $product) {
+add_filter('woocommerce_get_price_html', 'parusweb_format_price_with_unit', 10, 2);
+function parusweb_format_price_with_unit($price_html, $product) {
     if (!$product) {
         return $price_html;
     }
     
     $product_id = $product->get_id();
-    $sale_type = get_product_sale_type($product_id);
-    $unit = get_post_meta($product_id, '_custom_unit', true);
     
-    // Определяем суффикс единицы измерения
-    $suffix = '';
-    switch ($sale_type) {
-        case 'square_meter':
-            $suffix = '/м²';
-            break;
-        case 'running_meter':
-            $suffix = '/м.п.';
-            break;
-        default:
-            if ($unit) {
-                $suffix = '/' . $unit;
-            }
-            break;
+    // Получаем единицу измерения
+    if (function_exists('get_category_based_unit')) {
+        $unit = get_category_based_unit($product_id);
+    } else {
+        $unit = get_post_meta($product_id, '_custom_unit', true);
     }
     
-    if ($suffix && is_shop() || is_product_category() || is_product()) {
-        // Добавляем суффикс к каждой цене в HTML
+    // Определяем суффикс
+    $suffix = '';
+    
+    if ($unit === 'м²') {
+        $suffix = '/м²';
+    } elseif ($unit === 'м.п.') {
+        $suffix = '/м.п.';
+    } elseif (function_exists('is_square_meter_category') && is_square_meter_category($product_id)) {
+        $suffix = '/м²';
+    } elseif (function_exists('is_running_meter_category') && is_running_meter_category($product_id)) {
+        $suffix = '/м.п.';
+    } elseif ($unit && $unit !== 'шт') {
+        $suffix = '/' . $unit;
+    }
+    
+    // Добавляем суффикс
+    if ($suffix && !empty($price_html)) {
+        // Убираем старые суффиксы если они есть
+        $price_html = preg_replace('/\/(м²|м\.п\.|шт|лист)/', '', $price_html);
+        
+        // Добавляем суффикс перед закрывающим тегом
         $price_html = preg_replace(
-            '/(<\/bdi>)/i',
-            '$1<small class="unit-suffix">' . esc_html($suffix) . '</small>',
-            $price_html
+            '/(<\/bdi>|<\/span>)(?!.*<\/bdi>|<\/span>)/i',
+            '<small class="unit-suffix">' . $suffix . '</small>$1',
+            $price_html,
+            1
         );
     }
     
@@ -100,10 +60,10 @@ function format_price_with_unit($price_html, $product) {
 }
 
 /**
- * Отображение цены за единицу в карточке товара
+ * Отображение информации о площади упаковки
  */
-add_action('woocommerce_single_product_summary', 'display_unit_price_info', 11);
-function display_unit_price_info() {
+add_action('woocommerce_single_product_summary', 'parusweb_display_package_area', 12);
+function parusweb_display_package_area() {
     global $product;
     
     if (!$product) {
@@ -111,80 +71,87 @@ function display_unit_price_info() {
     }
     
     $product_id = $product->get_id();
-    $sale_type = get_product_sale_type($product_id);
+    $title = $product->get_name();
     
-    if ($sale_type === 'standard') {
+    // Проверяем нужна ли информация о площади
+    if (!function_exists('extract_area_with_qty')) {
         return;
     }
     
-    $price = $product->get_price();
-    $multiplier = get_final_multiplier($product_id);
+    $area_data = extract_area_with_qty($title, $product_id);
     
-    if ($multiplier != 1.0) {
-        $price = $price * $multiplier;
-    }
-    
-    $unit_label = '';
-    switch ($sale_type) {
-        case 'square_meter':
-            $unit_label = 'за м²';
-            break;
-        case 'running_meter':
-            $unit_label = 'за погонный метр';
-            break;
-    }
-    
-    if ($unit_label) {
-        echo '<div class="unit-price-info" style="margin: 10px 0; padding: 10px; background: #f0f8ff; border-radius: 6px;">';
-        echo '<span style="color: #666;">Цена:</span> ';
-        echo '<strong style="color: #2271b1; font-size: 18px;">' . wc_price($price) . '</strong> ';
-        echo '<span style="color: #666;">' . esc_html($unit_label) . '</span>';
-        echo '</div>';
-    }
-}
-
-/**
- * Добавление информации о площади упаковки
- */
-add_action('woocommerce_single_product_summary', 'display_package_area', 12);
-function display_package_area() {
-    global $product;
-    
-    if (!$product) {
+    if (empty($area_data['area']) || $area_data['area'] <= 0) {
         return;
     }
     
-    $product_id = $product->get_id();
-    $title = $product->get_title();
-    $area = extract_area_with_qty($title, $product_id);
+    $area = $area_data['area'];
+    $qty = isset($area_data['qty']) ? $area_data['qty'] : 1;
     
-    if (!$area) {
-        return;
-    }
-    
-    // Определяем единицу упаковки
+    // Определяем единицу (упаковка или лист)
     $leaf_parent_id = 190;
-    $leaf_children = [191, 127, 94];
-    $leaf_ids = array_merge([$leaf_parent_id], $leaf_children);
+    $leaf_children = array(191, 127, 94);
+    $leaf_ids = array_merge(array($leaf_parent_id), $leaf_children);
     $is_leaf = has_term($leaf_ids, 'product_cat', $product_id);
     
     $unit = $is_leaf ? 'листа' : 'упаковки';
     
     echo '<div class="package-area-info" style="margin: 10px 0; padding: 10px; background: #e8f4f8; border-radius: 6px;">';
-    echo '<span style="color: #666;">Площадь ' . $unit . ':</span> ';
+    echo '<span style="color: #666;">Площадь ' . esc_html($unit) . ':</span> ';
     echo '<strong style="color: #2271b1;">' . number_format($area, 2, ',', ' ') . ' м²</strong>';
+    echo '</div>';
+}
+
+/**
+ * Отображение цены за единицу в карточке товара
+ */
+add_action('woocommerce_single_product_summary', 'parusweb_display_unit_price_info', 11);
+function parusweb_display_unit_price_info() {
+    global $product;
+    
+    if (!$product) {
+        return;
+    }
+    
+    $product_id = $product->get_id();
+    
+    // Проверяем тип товара
+    $unit = '';
+    if (function_exists('get_category_based_unit')) {
+        $unit = get_category_based_unit($product_id);
+    }
+    
+    // Показываем только для специфических единиц
+    if ($unit !== 'м²' && $unit !== 'м.п.') {
+        return;
+    }
+    
+    $price = $product->get_price();
+    
+    // Применяем множитель если есть
+    if (function_exists('get_final_multiplier')) {
+        $multiplier = get_final_multiplier($product_id);
+        if ($multiplier != 1.0) {
+            $price = $price * $multiplier;
+        }
+    }
+    
+    $unit_label = ($unit === 'м²') ? 'за м²' : 'за погонный метр';
+    
+    echo '<div class="unit-price-info" style="margin: 10px 0; padding: 10px; background: #f0f8ff; border-radius: 6px;">';
+    echo '<span style="color: #666;">Цена:</span> ';
+    echo '<strong style="color: #2271b1; font-size: 18px;">' . wc_price($price) . '</strong> ';
+    echo '<span style="color: #666;">' . esc_html($unit_label) . '</span>';
     echo '</div>';
 }
 
 /**
  * Форматирование цены в корзине
  */
-add_filter('woocommerce_cart_item_price', 'format_cart_item_price', 10, 3);
-function format_cart_item_price($price_html, $cart_item, $cart_item_key) {
+add_filter('woocommerce_cart_item_price', 'parusweb_format_cart_item_price', 10, 3);
+function parusweb_format_cart_item_price($price_html, $cart_item, $cart_item_key) {
     $product_id = $cart_item['product_id'];
-    $sale_type = get_product_sale_type($product_id);
     
-    // Для товаров с кастомными расчетами показываем итоговую цену
+    // Для товаров с кастомными расчетами показываем итоговую цену за единицу
     if (isset($cart_item['custom_area_calc'])) {
         $data = $cart_item['custom_area_calc'];
         $unit_price = $data['total_price'] / $data['packs'];
@@ -215,26 +182,34 @@ function format_cart_item_price($price_html, $cart_item, $cart_item_key) {
 /**
  * Форматирование подытога в корзине
  */
-add_filter('woocommerce_cart_item_subtotal', 'format_cart_item_subtotal', 10, 3);
-function format_cart_item_subtotal($subtotal, $cart_item, $cart_item_key) {
+add_filter('woocommerce_cart_item_subtotal', 'parusweb_format_cart_item_subtotal', 10, 3);
+function parusweb_format_cart_item_subtotal($subtotal, $cart_item, $cart_item_key) {
     // Для товаров с кастомными расчетами показываем полную стоимость
     if (isset($cart_item['custom_area_calc'])) {
-        $total = $cart_item['custom_area_calc']['grand_total'] ?? $cart_item['custom_area_calc']['total_price'];
+        $total = isset($cart_item['custom_area_calc']['grand_total']) 
+            ? $cart_item['custom_area_calc']['grand_total'] 
+            : $cart_item['custom_area_calc']['total_price'];
         return wc_price($total);
     }
     
     if (isset($cart_item['custom_multiplier_calc'])) {
-        $total = $cart_item['custom_multiplier_calc']['grand_total'] ?? $cart_item['custom_multiplier_calc']['price'];
+        $total = isset($cart_item['custom_multiplier_calc']['grand_total']) 
+            ? $cart_item['custom_multiplier_calc']['grand_total'] 
+            : $cart_item['custom_multiplier_calc']['price'];
         return wc_price($total);
     }
     
     if (isset($cart_item['custom_running_meter_calc'])) {
-        $total = $cart_item['custom_running_meter_calc']['grand_total'] ?? $cart_item['custom_running_meter_calc']['price'];
+        $total = isset($cart_item['custom_running_meter_calc']['grand_total']) 
+            ? $cart_item['custom_running_meter_calc']['grand_total'] 
+            : $cart_item['custom_running_meter_calc']['price'];
         return wc_price($total);
     }
     
     if (isset($cart_item['custom_square_meter_calc'])) {
-        $total = $cart_item['custom_square_meter_calc']['grand_total'] ?? $cart_item['custom_square_meter_calc']['price'];
+        $total = isset($cart_item['custom_square_meter_calc']['grand_total']) 
+            ? $cart_item['custom_square_meter_calc']['grand_total'] 
+            : $cart_item['custom_square_meter_calc']['price'];
         return wc_price($total);
     }
     
@@ -242,10 +217,99 @@ function format_cart_item_subtotal($subtotal, $cart_item, $cart_item_key) {
 }
 
 /**
- * CSS для единиц измерения
+ * Добавление информации о параметрах в корзине
  */
-add_action('wp_head', 'add_unit_display_styles');
-function add_unit_display_styles() {
+add_filter('woocommerce_get_item_data', 'parusweb_display_custom_item_data', 10, 2);
+function parusweb_display_custom_item_data($item_data, $cart_item) {
+    // Расчет по площади
+    if (isset($cart_item['custom_area_calc'])) {
+        $data = $cart_item['custom_area_calc'];
+        
+        if (!empty($data['width'])) {
+            $item_data[] = array(
+                'name' => 'Ширина',
+                'value' => $data['width'] . ' м'
+            );
+        }
+        
+        if (!empty($data['length'])) {
+            $item_data[] = array(
+                'name' => 'Длина',
+                'value' => $data['length'] . ' м'
+            );
+        }
+        
+        if (!empty($data['area'])) {
+            $item_data[] = array(
+                'name' => 'Площадь',
+                'value' => number_format($data['area'], 2, ',', ' ') . ' м²'
+            );
+        }
+        
+        if (!empty($data['packs'])) {
+            $item_data[] = array(
+                'name' => 'Количество',
+                'value' => $data['packs'] . ' ' . ($data['packs'] > 1 ? 'упаковок' : 'упаковка')
+            );
+        }
+    }
+    
+    // Расчет по длине (погонные метры)
+    if (isset($cart_item['custom_running_meter_calc'])) {
+        $data = $cart_item['custom_running_meter_calc'];
+        
+        if (!empty($data['length'])) {
+            $item_data[] = array(
+                'name' => 'Длина',
+                'value' => $data['length'] . ' м.п.'
+            );
+        }
+        
+        if (!empty($data['quantity'])) {
+            $item_data[] = array(
+                'name' => 'Количество',
+                'value' => $data['quantity']
+            );
+        }
+    }
+    
+    // Расчет по квадратным метрам
+    if (isset($cart_item['custom_square_meter_calc'])) {
+        $data = $cart_item['custom_square_meter_calc'];
+        
+        if (!empty($data['square_meters'])) {
+            $item_data[] = array(
+                'name' => 'Площадь',
+                'value' => number_format($data['square_meters'], 2, ',', ' ') . ' м²'
+            );
+        }
+    }
+    
+    // Данные покраски
+    if (isset($cart_item['painting_service'])) {
+        $painting = $cart_item['painting_service'];
+        
+        $item_data[] = array(
+            'name' => 'Услуга покраски',
+            'value' => $painting['name']
+        );
+        
+        if (!empty($painting['color_code'])) {
+            $item_data[] = array(
+                'name' => 'Цвет',
+                'value' => $painting['color_code']
+            );
+        }
+    }
+    
+    return $item_data;
+}
+
+/**
+ * CSS стили для единиц измерения
+ */
+add_action('wp_head', 'parusweb_unit_display_styles');
+function parusweb_unit_display_styles() {
     ?>
     <style>
     .unit-suffix {
@@ -259,69 +323,25 @@ function add_unit_display_styles() {
         display: flex;
         align-items: center;
         gap: 5px;
+        flex-wrap: wrap;
     }
     
     .package-area-info {
         display: flex;
         align-items: center;
         gap: 5px;
+        flex-wrap: wrap;
     }
     
     @media (max-width: 768px) {
         .unit-suffix {
             font-size: 0.75em;
         }
-    }
-    </style>
-    <?php
-}
-
-/**
- * Отображение единицы измерения в миникорзине
- */
-add_filter('woocommerce_widget_cart_item_quantity', 'format_mini_cart_quantity', 10, 3);
-function format_mini_cart_quantity($quantity_html, $cart_item, $cart_item_key) {
-    $product_id = $cart_item['product_id'];
-    $sale_type = get_product_sale_type($product_id);
-    
-    $quantity = $cart_item['quantity'];
-    
-    $unit = '';
-    switch ($sale_type) {
-        case 'square_meter':
-            $unit = ' м²';
-            break;
-        case 'running_meter':
-            $unit = ' м.п.';
-            break;
-        default:
-            $custom_unit = get_post_meta($product_id, '_custom_unit', true);
-            if ($custom_unit) {
-                $unit = ' ' . $custom_unit;
-            }
-            break;
-    }
-    
-    if ($unit) {
-        $quantity_html = preg_replace(
-            '/(<span class="quantity">.*?)(<\/span>)/i',
-            '$1' . esc_html($unit) . '$2',
-            $quantity_html
-        );
-    }
-    
-    return $quantity_html;
-}
-
-/**
- * Хук для корректного отображения в мини-корзине
- */
-add_action('woocommerce_before_mini_cart', 'mini_cart_unit_styles');
-function mini_cart_unit_styles() {
-    ?>
-    <style>
-    .woocommerce-mini-cart-item .quantity {
-        font-size: 0.9em;
+        
+        .unit-price-info,
+        .package-area-info {
+            font-size: 14px;
+        }
     }
     </style>
     <?php
