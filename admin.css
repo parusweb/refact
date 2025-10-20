@@ -1,0 +1,90 @@
+/* ParusWeb Functions - Стили админки */
+
+.parusweb-modules-page {
+    max-width: 1200px;
+}
+
+.parusweb-modules-page h1 {
+    margin-bottom: 20px;
+}
+
+.parusweb-modules-page table {
+    margin-top: 20px;
+}
+
+.parusweb-modules-page td {
+    vertical-align: middle;
+}
+
+.module-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.dependency-badge {
+    display: inline-block;
+    background: #2271b1;
+    color: #fff;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin: 2px;
+}
+
+.no-deps {
+    color: #999;
+    font-style: italic;
+}
+
+.status-loaded {
+    color: #46b450;
+    font-weight: 600;
+}
+
+.status-pending {
+    color: #f0b849;
+    font-weight: 600;
+}
+
+.status-error {
+    color: #dc3232;
+    font-weight: 600;
+}
+
+.status-disabled {
+    color: #999;
+}
+
+.parusweb-info {
+    margin-top: 30px;
+    padding: 15px;
+    background: #f0f0f1;
+    border-left: 4px solid #2271b1;
+}
+
+.parusweb-info h3 {
+    margin-top: 0;
+}
+
+.parusweb-info p {
+    margin-bottom: 10px;
+}
+
+tr[data-module].disabled {
+    opacity: 0.5;
+}
+
+tr[data-module].has-missing-deps {
+    background: #fff3cd;
+}
+
+tr[data-module].will-disable-dependents {
+    background: #f8d7da;
+}
+
+.dashicons-admin-tools {
+    color: #2271b1;
+    font-size: 16px;
+    vertical-align: middle;
+}
